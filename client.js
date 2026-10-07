@@ -15,21 +15,20 @@
 //    `ctx.slots.provideRoot({ hooks: { sessions: ctx.sessions.list, sessionStatus } })`
 //    提供两个标准源；槽渲染层把它们经 `standardHookPropName`（`use` + 首字母大写）
 //    注入条目组件 props —— 即 `useSessions` / `useSessionStatus`。
-//    - `useSessions(snapshot => …)`：`{ ids: string[], byId: {id, displayTitle,
-//      running, retainedBy: {mainView?}, parentId?, origin?}, phase }`
-//    - `useSessionStatus(map => …)`：`Map<sessionId, {running,
-//      pendingInteraction, completionUnread}>`
 //    这正是官方 WorkspaceBrowser 消费同一批数据的方式（字段同源）。
 //
-// 3. 状态映射（与官方 sessionStatuses 同判据）：
-//    running → ongoing（旋转绿点）；pendingInteraction → warning；
-//    completionUnread（完成未读）→ done；其余 → idle。
-//
-// 4. 打开会话：`ctx.get("uiWorkspace").openSession(id)`
+// 3. 打开会话：`ctx.get("uiWorkspace").openSession(id)`
 //    （dsh-client-ui-workspace 的 UiWorkspaceService，better-sidebar 同款调用）。
 //
-// 5. 交互：左侧 10px 热区悬浮 → 展开面板；指针离开面板 → 320ms 后收回。
-//    官方侧栏保持常折叠，本面板独立存在，二者不冲突。
+// 4. 展开官方侧栏：`ctx.get("layout").toggleSidebar()`
+//    （dsh-client-ui-sidebar 注入的同款回调：`toggleSidebar: () => { ctx.layout.toggleSidebar() }`）。
+//
+// 5. **只在官方侧栏折叠时激活**：AppFrame 的 frame div 带
+//    `data-sidebar-collapsed` 属性（layout 包 gridTemplateColumns 处，2026-10 逆向确认）。
+//    热区以 MutationObserver 监听该属性——侧栏展开时热区 pointer-events:none，
+//    完全不干扰官方侧栏；折叠时才启用。
+//
+// 6. 面板头部带「展开侧栏」按钮 + Session 标题；指针离开面板 320ms 收回。
 
 window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
 
@@ -54,22 +53,30 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
   const NS = "dsh-sidebar-hud";
   const COLLAPSE_DELAY_MS = 320;        // 指针离开后收回的延迟
   const PANEL_WIDTH = 264;              // 面板宽度（px）
-  const EDGE_HOTZONE = 56;             // 左缘热区宽度（px）：与官方折叠 rail 同宽（dsh-client-ui-sidebar 折叠列为 56px）
+  const EDGE_HOTZONE = 56;              // 左缘热区宽度（px）：与官方折叠 rail 同宽
   const MAX_ROWS = 60;                  // 最多渲染的会话行数（超出截断）
 
   // ── 样式（一次性注入，类名带插件前缀避免冲突）──────────────────────────
 
   const CSS = `
 .${NS}-host{position:absolute;top:0;bottom:0;left:0;width:0;pointer-events:none;font:12px/1.5 var(--dsw-font-sans,system-ui,sans-serif)}
-.${NS}-zone{position:absolute;top:0;bottom:0;left:0;width:${EDGE_HOTZONE}px;pointer-events:auto;cursor:default}
+/* 热区：默认禁用；仅在官方侧栏折叠（data-sidebar-collapsed 存在）时启用 */
+.${NS}-zone{position:absolute;top:0;bottom:0;left:0;width:${EDGE_HOTZONE}px;pointer-events:none;cursor:default}
+body[data-${NS}-active] .${NS}-zone{pointer-events:auto}
 .${NS}-panel{position:absolute;top:0;bottom:0;left:0;width:${PANEL_WIDTH}px;pointer-events:auto;display:flex;flex-direction:column;
   background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#1b1b22));
   border-right:1px solid var(--dsw-alias-stroke-default,#ffffff14);
   box-shadow:0 10px 40px -12px #0003,0 2px 12px -4px #0002;
   animation:${NS}-in .24s var(--ds-ease-in-out,ease-in-out);overflow:hidden}
 @keyframes ${NS}-in{0%{opacity:0;transform:translateX(-8px)}}
-.${NS}-head{display:flex;align-items:center;gap:6px;padding:10px 12px 8px;flex:none;
-  color:var(--dsw-alias-label-secondary,#ffffff99);font-weight:600;letter-spacing:.02em}
+.${NS}-head{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px;flex:none;
+  border-bottom:1px solid var(--dsw-alias-stroke-default,#ffffff14)}
+.${NS}-headtitle{flex:1;min-width:0;color:var(--dsw-alias-label-secondary,#ffffff99);font-weight:600;letter-spacing:.02em}
+.${NS}-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;
+  height:26px;padding:0 8px;border:0;border-radius:6px;cursor:pointer;font:inherit;font-size:12px;
+  background:transparent;color:var(--dsw-alias-label-secondary,#ffffff99)}
+.${NS}-btn:hover{background:var(--dsw-alias-fill-hover,#ffffff0f);color:var(--dsw-alias-label-primary,#ffffffd9)}
+.${NS}-btn svg{width:14px;height:14px;flex:none}
 .${NS}-list{flex:1;overflow-y:auto;padding:0 6px 10px}
 .${NS}-row{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:6px;
   background:transparent;color:var(--dsw-alias-label-primary,#ffffffd9);text-align:left;cursor:pointer;
@@ -84,7 +91,6 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
 @keyframes ${NS}-spin{to{transform:rotate(360deg)}}
 .${NS}-dot{width:10px;height:10px;flex:none;border-radius:50%}
 .${NS}-dot[data-state="done"]{background:var(--dsw-alias-state-success-primary,#4ade80)}
-.${NS}-dot[data-state="warning"]{background:var(--dsw-alias-state-warning-primary,#fbbf24)}
 .${NS}-dot[data-state="idle"]{background:var(--dsw-alias-fill-hover,#ffffff2e)}
 `;
 
@@ -96,7 +102,36 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
     document.head.appendChild(el);
   }
 
-  // ── 状态点（ongoing 旋转 / done 绿 / warning 黄 / idle 灰）─────────────
+  // ── 官方侧栏折叠状态检测 ─────────────────────────────────────────────────
+  //
+  // AppFrame 的 frame div 在侧栏折叠时带 `data-sidebar-collapsed` 属性
+  // （dsh-client-ui-layout：`"data-sidebar-collapsed": sidebarCollapsed || void 0`）。
+  // 用 body 上的镜像标记驱动 CSS（`.zone` 的 pointer-events 切换），
+  // React 侧用状态同步（面板开着时若侧栏展开则立即收回）。
+
+  function useSidebarCollapsed() {
+    const [collapsed, setCollapsed] = useState(() =>
+      document.querySelector("[data-sidebar-collapsed]") !== null);
+    useEffect(() => {
+      const frame = document.querySelector("[data-sidebar-collapsed], [class*='frame']");
+      // 优先监听 frame div 的属性变化；frame 尚未挂载时退化为全 body 扫描
+      const target = frame ?? document.body;
+      const obs = new MutationObserver(() => {
+        setCollapsed(document.querySelector("[data-sidebar-collapsed]") !== null);
+      });
+      obs.observe(target, { attributes: true, attributeFilter: ["data-sidebar-collapsed"] });
+      // frame 可能晚于插件挂载：用短轮询兜底找一次
+      let tries = 0;
+      const poll = setInterval(() => {
+        if (document.querySelector("[data-sidebar-collapsed]") || ++tries > 20) clearInterval(poll);
+        setCollapsed(document.querySelector("[data-sidebar-collapsed]") !== null);
+      }, 500);
+      return () => { obs.disconnect(); clearInterval(poll); };
+    }, []);
+    return collapsed;
+  }
+
+  // ── 状态点（ongoing 旋转 / done 绿 / idle 灰）────────────────────────────
 
   function HudDot({ state }) {
     if (state === "ongoing") {
@@ -128,7 +163,7 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
 
   // ── 面板主体 ────────────────────────────────────────────────────────────
 
-  function HudPanel({ useSessions, useSessionStatus, onOpen }) {
+  function HudPanel({ useSessions, useSessionStatus, onOpen, onExpandSidebar }) {
     const list = useSessions((state) => state);
     const status = useSessionStatus((map) => map);
     const [now, setNow] = useState(() => Date.now());
@@ -176,20 +211,44 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
       h("span", { className: NS + "-title" }, row.displayTitle ?? row.id),
       h("span", { style: { opacity: .5, flex: "none" } }, relTime(row.updatedAt)));
 
+    // 头部按钮：展开官方侧栏（点击后本面板随之关闭——侧栏展开了，悬浮面板退位）
+    const expandBtn = h("button", {
+      type: "button",
+      className: NS + "-btn",
+      title: "展开侧栏",
+      "aria-label": "展开侧栏",
+      onClick: () => { onExpandSidebar(); },
+    },
+      h("svg", { viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+        h("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2.5, stroke: "currentColor", "stroke-width": 1.7 }),
+        h("rect", { x: 3, y: 4, width: 7.5, height: 16, rx: 2.5, fill: "currentColor", opacity: .85 })));
+
     return h("div", { className: NS + "-panel" },
-      h("div", { className: NS + "-head" }, "Sessions",
-        total > MAX_ROWS ? h("span", { style: { fontWeight: 400, opacity: .6 } }, ` (${total})`) : null),
+      h("div", { className: NS + "-head" },
+        expandBtn,
+        h("span", { className: NS + "-headtitle" }, "Sessions",
+          total > MAX_ROWS ? h("span", { style: { fontWeight: 400, opacity: .6 } }, ` (${total})`) : null)),
       h("div", { className: NS + "-list", role: "list" },
         rows.length === 0
           ? h("div", { className: NS + "-empty" }, "No sessions")
-          : rows.map((row) => rowEl(row, false))));
+          : rows.map((row) => rowEl(row))));
   }
 
   // ── 外壳：热区 + 悬浮状态机 ─────────────────────────────────────────────
 
-  function HudHost({ useSessions, useSessionStatus, onOpen }) {
+  function HudHost({ useSessions, useSessionStatus, onOpen, onToggleSidebar }) {
     const [open, setOpen] = useState(false);
+    const collapsed = useSidebarCollapsed();
     const collapseTimer = useRef(null);
+
+    // 热区激活镜像标记（驱动 CSS pointer-events 切换）
+    useEffect(() => {
+      if (collapsed) document.body.setAttribute(`data-${NS}-active`, "");
+      else document.body.removeAttribute(`data-${NS}-active`);
+      // 侧栏展开时面板立即收回（此时热区已失效，面板若开着会挡住官方侧栏）
+      if (!collapsed) setOpen(false);
+      return () => document.body.removeAttribute(`data-${NS}-active`);
+    }, [collapsed]);
 
     const armCollapse = useCallback(() => {
       if (collapseTimer.current !== null) clearTimeout(collapseTimer.current);
@@ -211,17 +270,24 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
       if (collapseTimer.current !== null) clearTimeout(collapseTimer.current);
     }, []);
 
+    // 展开官方侧栏：toggleSidebar + 立即收回本面板（展开后热区随之失效）
+    const expandSidebar = useCallback(() => {
+      try { onToggleSidebar(); } catch {}
+      cancelCollapse();
+      setOpen(false);
+    }, [onToggleSidebar, cancelCollapse]);
+
     return h("div", { className: NS + "-host" },
       h("div", {
         className: NS + "-zone",
-        onPointerEnter: () => { cancelCollapse(); setOpen(true); },
-        // 热区离开（未进入面板）→ 直接计时收回
+        // 仅折叠态可触发（CSS 层已禁 pointer-events，此处双保险）
+        onPointerEnter: () => { if (collapsed) { cancelCollapse(); setOpen(true); } },
         onPointerLeave: () => { if (open) armCollapse(); },
       }),
-      open ? h("div", {
+      open && collapsed ? h("div", {
         onPointerEnter: cancelCollapse,
         onPointerLeave: armCollapse,
-      }, h(HudPanel, { useSessions, useSessionStatus, onOpen })) : null);
+      }, h(HudPanel, { useSessions, useSessionStatus, onOpen, onExpandSidebar: expandSidebar })) : null);
   }
 
   // ── 注册 ────────────────────────────────────────────────────────────────
@@ -243,12 +309,18 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
       } catch {}
     };
 
+    // 展开官方侧栏：与官方 HeaderLeadingControls 同款调用
+    // （dsh-client-ui-sidebar 注入契约：`toggleSidebar: () => { ctx.layout.toggleSidebar() }`）。
+    const toggleSidebar = () => {
+      try { ctx.get("layout").toggleSidebar(); } catch {}
+    };
+
     ctx.slots.inject("shell.overlay", () => ctx.slots.register({
       name: "shell.overlay",
       id: NS + ".panel",
       order: 900,  // 排在官方 overlay 条目之后，不影响其渲染
       // root scope 槽的标准源自动经 useSessions / useSessionStatus 注入
-    }, (props) => h(HudHost, { ...props, onOpen: openSession })));
+    }, (props) => h(HudHost, { ...props, onOpen: openSession, onToggleSidebar: toggleSidebar })));
   }
 
   // ⚠ factory 必须把模块对象 **return** 出去——loader 以 factory 返回值为准。
@@ -257,9 +329,3 @@ window.__ModuleLoader__.load({ id: "dsh-sidebar-hud", factory: (require) => {
   return module.exports;
 
 }});
-
-
-
-
-
-
