@@ -1,0 +1,51 @@
+{
+  "name": "dsh-sidebar-hud",
+  "version": "0.1.0",
+  "description": "Sidebar HUD for DSH — pure-plugin floating sessions panel on the left edge. Hover to reveal running/done status dots; click a row to open the session. Zero official-package modification (dsh-update-proof).",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "sidebar",
+    "sessions",
+    "hud"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OakBear/dsh-sidebar-hud.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OakBear/dsh-sidebar-hud/issues"
+  },
+  "homepage": "https://github.com/OakBear/dsh-sidebar-hud#readme",
+  "license": "MIT"
+}

@@ -1,0 +1,10 @@
+# dsh-sidebar-hud bundle patch：把插件 entry 插入 profile 树。
+#
+# ⚠ bundle 的 cordis.patch.yml 不只是「补丁声明」——它是 bundle 参与组合的入口。
+# 空数组 [] = 不插入任何 entry = 插件宿主侧永不加载（client bundle 也无从谈起）。
+# 必须有一行 insert，把本包作为 plugin entry 挂进树（dsh-purge / dsh-graph-workflow 同款）。
+- insert:
+    - id: dsh-sidebar-hud
+      name: 'dsh-sidebar-hud'
+      config:
+        enabled: true
